@@ -1,0 +1,121 @@
+:root {
+  --bg-color: #0b0f19; /* 夜の街の深い色 */
+  --text-color: #e2e8f0;
+  --text-muted: #94a3b8;
+  --taxi-yellow: #facc15; /* タクシーの温かいイエロー */
+  --neon-blue: #38bdf8;
+  --neon-purple: #c084fc;
+  
+  --glass-bg: rgba(17, 24, 39, 0.7);
+  --glass-border: rgba(255, 255, 255, 0.1);
+  --glass-shadow: 0 4px 30px rgba(0, 0, 0, 0.5);
+  
+  --font-sans: 'Inter', -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif;
+}
+
+* {
+  box-sizing: border-box;
+  padding: 0;
+  margin: 0;
+}
+
+body {
+  background-color: var(--bg-color);
+  color: var(--text-color);
+  font-family: var(--font-sans);
+  min-height: 100vh;
+  /* 夜の街灯が窓ガラスを流れるような、ほのかなグラデーション */
+  background-image: 
+    radial-gradient(circle at 15% 50%, rgba(250, 204, 21, 0.05), transparent 25%),
+    radial-gradient(circle at 85% 30%, rgba(56, 189, 248, 0.05), transparent 25%);
+  background-attachment: fixed;
+}
+
+a {
+  color: inherit;
+  text-decoration: none;
+}
+
+/* Glassmorphism Utility Class */
+.glass-panel {
+  background: var(--glass-bg);
+  backdrop-filter: blur(12px);
+  -webkit-backdrop-filter: blur(12px);
+  border: 1px solid var(--glass-border);
+  box-shadow: var(--glass-shadow);
+  border-radius: 16px;
+}
+
+/* ボタンの共通スタイル */
+.taxi-btn {
+  background: var(--taxi-yellow);
+  color: #000;
+  border: none;
+  padding: 12px 24px;
+  border-radius: 8px;
+  font-size: 1rem;
+  font-weight: 600;
+  cursor: pointer;
+  transition: all 0.3s ease;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
+}
+
+.taxi-btn:hover {
+  background: #fde047;
+  transform: translateY(-2px);
+  box-shadow: 0 4px 15px rgba(250, 204, 21, 0.4);
+}
+
+.taxi-btn:active {
+  transform: translateY(0);
+}
+
+.taxi-btn:disabled {
+  background: #475569;
+  color: #94a3b8;
+  cursor: not-allowed;
+  box-shadow: none;
+  transform: none;
+}
+
+/* フォーム入力スタイル */
+.taxi-input {
+  width: 100%;
+  background: rgba(0, 0, 0, 0.3);
+  border: 1px solid rgba(255, 255, 255, 0.2);
+  color: #fff;
+  padding: 14px 16px;
+  border-radius: 8px;
+  font-size: 1rem;
+  transition: border-color 0.3s ease;
+}
+
+.taxi-input:focus {
+  outline: none;
+  border-color: var(--taxi-yellow);
+  box-shadow: 0 0 0 2px rgba(250, 204, 21, 0.2);
+}
+
+/* Animations */
+@keyframes fadeIn {
+  from { opacity: 0; transform: translateY(10px); }
+  to { opacity: 1; transform: translateY(0); }
+}
+
+.animate-fade-in {
+  animation: fadeIn 0.6s ease forwards;
+}
+
+/* ローディング時のネオンパルス */
+@keyframes neonPulse {
+  0% { box-shadow: 0 0 10px rgba(250, 204, 21, 0.2); }
+  50% { box-shadow: 0 0 20px rgba(250, 204, 21, 0.6); }
+  100% { box-shadow: 0 0 10px rgba(250, 204, 21, 0.2); }
+}
+
+.neon-pulse {
+  animation: neonPulse 2s infinite ease-in-out;
+}
