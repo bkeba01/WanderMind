@@ -3,6 +3,9 @@
 import { useState, useCallback } from 'react'
 import ChatWindow from '@/components/ChatWindow'
 import SpotCard from '@/components/SpotCard'
+import MapEmbed from '@/components/MapEmbed'
+import LikedSpotsTray from '@/components/LikedSpotsTray'
+import { haversineKm, formatDistance, buildNavUrl, type LatLng } from '@/lib/geo'
 import type { Message, Spot, RouteInfo, SetupStep } from '@/types/chat'
 
 const INITIAL_MESSAGE: Message = {
@@ -27,7 +30,14 @@ function getLocation(): Promise<GeolocationCoordinates> {
 
 // ── 確定ルートパネル（右カラム・done フェーズ） ────────────────
 
-function RouteSummaryPanel({ routeInfo }: { routeInfo: RouteInfo }) {
+function RouteSummaryPanel({ routeInfo, userCoords, transportation }: {
+  routeInfo: RouteInfo
+  userCoords: LatLng | null
+  transportation: 'walking' | 'driving'
+}) {
+  const totalStay = routeInfo.spots.reduce((sum, s) => sum + (s.estimated_stay_minutes ?? 0), 0)
+  const spotLocations = routeInfo.spots.map(s => s.location)
+
   return (
     <div style={{
       borderRadius: 20,
@@ -39,42 +49,81 @@ function RouteSummaryPanel({ routeInfo }: { routeInfo: RouteInfo }) {
     }}>
       <div style={{ padding: '1.25rem 1.5rem', borderBottom: '1px solid rgba(250,204,21,0.12)', background: 'rgba(250,204,21,0.04)' }}>
         <div style={{ color: '#facc15', fontWeight: 700, fontSize: '0.9rem', marginBottom: 4 }}>
-          🗺️ 確定ルート
+          🗺️ 確定ルート（{routeInfo.spots.length}スポット）
         </div>
-        <div style={{ color: '#94a3b8', fontSize: '0.78rem' }}>
-          移動合計 {routeInfo.total_travel_minutes}分
+        <div style={{ color: '#94a3b8', fontSize: '0.78rem', display: 'flex', gap: '1rem', flexWrap: 'wrap' }}>
+          <span>🚶 移動合計 {routeInfo.total_travel_minutes}分</span>
+          {totalStay > 0 && <span>⏱ 滞在合計 約{totalStay}分</span>}
+          {totalStay > 0 && <span style={{ color: '#facc15' }}>合計 約{routeInfo.total_travel_minutes + totalStay}分</span>}
         </div>
       </div>
+
+      {/* 全行程マップ（現在地 → 各スポット） */}
+      <div style={{ borderBottom: '1px solid rgba(250,204,21,0.12)' }}>
+        <MapEmbed origin={userCoords} spots={spotLocations} transportation={transportation} height={220} />
+      </div>
+
       <div style={{ padding: '1.25rem 1.5rem', display: 'flex', flexDirection: 'column', gap: '1rem' }}>
-        {routeInfo.spots.map((spot, i) => (
-          <div key={spot.place_id}>
-            <div style={{ display: 'flex', gap: '0.75rem', alignItems: 'flex-start' }}>
-              <div style={{
-                width: 28, height: 28, borderRadius: '50%',
-                background: '#facc15', color: '#000',
-                display: 'flex', alignItems: 'center', justifyContent: 'center',
-                fontSize: '0.75rem', fontWeight: 700, flexShrink: 0, marginTop: 2,
-              }}>
-                {i + 1}
-              </div>
-              <div style={{ flex: 1 }}>
-                <div style={{ fontWeight: 600, fontSize: '0.95rem', color: '#e2e8f0' }}>{spot.name}</div>
-                <div style={{ color: '#94a3b8', fontSize: '0.78rem', marginTop: 2 }}>{spot.address}</div>
-                {spot.estimated_stay_minutes && (
-                  <div style={{ color: '#64748b', fontSize: '0.75rem', marginTop: 3 }}>
-                    ⏱ 滞在目安 {spot.estimated_stay_minutes}分
+        {routeInfo.spots.map((spot, i) => {
+          const dist = userCoords ? formatDistance(haversineKm(userCoords, spot.location)) : null
+          return (
+            <div key={spot.place_id}>
+              <div style={{ display: 'flex', gap: '0.75rem', alignItems: 'flex-start' }}>
+                <div style={{
+                  width: 28, height: 28, borderRadius: '50%',
+                  background: '#facc15', color: '#000',
+                  display: 'flex', alignItems: 'center', justifyContent: 'center',
+                  fontSize: '0.75rem', fontWeight: 700, flexShrink: 0, marginTop: 2,
+                }}>
+                  {i + 1}
+                </div>
+                <div style={{ flex: 1 }}>
+                  <div style={{ fontWeight: 600, fontSize: '0.95rem', color: '#e2e8f0' }}>{spot.name}</div>
+                  <div style={{ color: '#94a3b8', fontSize: '0.78rem', marginTop: 2 }}>{spot.address}</div>
+                  <div style={{ display: 'flex', gap: '0.8rem', flexWrap: 'wrap', marginTop: 3 }}>
+                    {spot.estimated_stay_minutes && (
+                      <span style={{ color: '#64748b', fontSize: '0.75rem' }}>
+                        ⏱ 滞在目安 {spot.estimated_stay_minutes}分
+                      </span>
+                    )}
+                    {dist && (
+                      <span style={{ color: '#a5b4fc', fontSize: '0.75rem' }}>
+                        📏 現在地から{dist}
+                      </span>
+                    )}
                   </div>
-                )}
+                </div>
               </div>
+              {i < routeInfo.travel_times.length && (
+                <div style={{ marginLeft: 14, marginTop: '0.4rem', marginBottom: '0.1rem', color: '#38bdf8', fontSize: '0.76rem', paddingLeft: '0.5rem', borderLeft: '2px solid rgba(56,189,248,0.25)' }}>
+                  ↓ 次まで約 {routeInfo.travel_times[i]}分
+                </div>
+              )}
             </div>
-            {i < routeInfo.travel_times.length && (
-              <div style={{ marginLeft: 14, marginTop: '0.4rem', marginBottom: '0.1rem', color: '#38bdf8', fontSize: '0.76rem', paddingLeft: '0.5rem', borderLeft: '2px solid rgba(56,189,248,0.25)' }}>
-                ↓ 次まで約 {routeInfo.travel_times[i]}分
-              </div>
-            )}
-          </div>
-        ))}
+          )
+        })}
       </div>
+
+      {/* Google Mapsナビ */}
+      {routeInfo.spots.length > 0 && (
+        <div style={{ padding: '0 1.5rem 1.25rem' }}>
+          <a
+            href={buildNavUrl(userCoords, spotLocations, transportation)}
+            target="_blank"
+            rel="noopener noreferrer"
+            style={{
+              display: 'block', textAlign: 'center',
+              padding: '0.7rem', borderRadius: 12,
+              background: 'rgba(250,204,21,0.12)',
+              border: '1px solid rgba(250,204,21,0.35)',
+              color: '#facc15', fontWeight: 700, fontSize: '0.88rem',
+              textDecoration: 'none',
+            }}
+          >
+            🧭 Google Mapsでナビを開く ↗
+          </a>
+        </div>
+      )}
     </div>
   )
 }
@@ -109,6 +158,7 @@ export default function Home() {
   const [currentSpot, setCurrentSpot] = useState<Spot | null>(null)
   const [spotMessage, setSpotMessage] = useState<string>('')
   const [transportation, setTransportation] = useState<'walking' | 'driving'>('walking')
+  const [userCoords, setUserCoords] = useState<LatLng | null>(null)
 
   const [pendingMood, setPendingMood] = useState('')
   const [pendingTime, setPendingTime] = useState(0)
@@ -161,6 +211,7 @@ export default function Home() {
 
     try {
       const coords = await getLocation()
+      setUserCoords({ latitude: coords.latitude, longitude: coords.longitude })
       const res = await fetch(`${API_URL}/api/v1/chat/session`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
@@ -208,6 +259,12 @@ export default function Home() {
     }
   }, [setupStep, threadId, isLoading, push, handleMoodSelect, applyResponse])
 
+  // 経由候補リストからスポットを選んで詳細表示を切り替える
+  const handleSelectLikedSpot = useCallback((spot: Spot) => {
+    setCurrentSpot(spot)
+    setSpotMessage('')
+  }, [])
+
   // ── レンダリング ────────────────────────────────────────────────
 
   return (
@@ -233,9 +290,17 @@ export default function Home() {
       <div className="wander-detail-col">
         <div style={{ width: '100%', maxWidth: 520 }}>
           {chatPhase === 'done' && routeInfo ? (
-            <RouteSummaryPanel routeInfo={routeInfo} />
+            <RouteSummaryPanel routeInfo={routeInfo} userCoords={userCoords} transportation={transportation} />
           ) : currentSpot ? (
-            <SpotCard spot={currentSpot} masterMessage={spotMessage} transportation={transportation} />
+            <>
+              <SpotCard spot={currentSpot} masterMessage={spotMessage} transportation={transportation} userCoords={userCoords} />
+              <LikedSpotsTray
+                spots={likedSpots}
+                currentPlaceId={currentSpot.place_id}
+                userCoords={userCoords}
+                onSelect={handleSelectLikedSpot}
+              />
+            </>
           ) : (
             <DetailPlaceholder />
           )}

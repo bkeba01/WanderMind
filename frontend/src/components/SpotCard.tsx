@@ -1,6 +1,8 @@
 'use client'
 
 import type { Spot } from '@/types/chat'
+import MapEmbed from '@/components/MapEmbed'
+import { haversineKm, formatDistance, buildPlaceUrl, type LatLng } from '@/lib/geo'
 
 const PRICE_LABELS: Record<number, string> = {
   0: '無料',
@@ -27,13 +29,15 @@ type SpotCardProps = {
   spot: Spot
   masterMessage?: string
   transportation?: 'walking' | 'driving'
+  userCoords?: LatLng | null
 }
 
-export default function SpotCard({ spot, masterMessage, transportation = 'walking' }: SpotCardProps) {
+export default function SpotCard({ spot, masterMessage, transportation = 'walking', userCoords = null }: SpotCardProps) {
   const rating = typeof spot.rating === 'number' ? spot.rating : null
   const typeEmoji = guessTypeEmoji(spot.name)
   const travelIcon = transportation === 'driving' ? '🚗' : '🚶'
   const travelLabel = transportation === 'driving' ? '車で' : '徒歩で'
+  const distance = userCoords ? formatDistance(haversineKm(userCoords, spot.location)) : null
 
   return (
     <div style={{
@@ -102,6 +106,11 @@ export default function SpotCard({ spot, masterMessage, transportation = 'walkin
                 {travelIcon} {travelLabel}約{spot.travel_time_minutes}分
               </span>
             )}
+            {distance && (
+              <span style={{ color: '#a5b4fc' }}>
+                📏 現在地から{distance}
+              </span>
+            )}
             {spot.estimated_stay_minutes && (
               <span style={{ color: '#94a3b8' }}>
                 ⏱ 滞在目安 {spot.estimated_stay_minutes}分
@@ -114,6 +123,26 @@ export default function SpotCard({ spot, masterMessage, transportation = 'walkin
             )}
           </div>
         </div>
+      </div>
+
+      {/* ── 地図（現在地からの経路） ── */}
+      <div style={{ borderBottom: '1px solid rgba(255,255,255,0.06)', position: 'relative' }}>
+        <MapEmbed origin={userCoords ?? null} spots={[spot.location]} transportation={transportation} height={180} />
+        <a
+          href={buildPlaceUrl(spot.location, spot.place_id)}
+          target="_blank"
+          rel="noopener noreferrer"
+          style={{
+            position: 'absolute', right: 10, bottom: 10,
+            fontSize: '0.72rem', fontWeight: 600,
+            color: '#e2e8f0', textDecoration: 'none',
+            background: 'rgba(15,20,35,0.9)',
+            border: '1px solid rgba(255,255,255,0.15)',
+            borderRadius: 16, padding: '4px 10px',
+          }}
+        >
+          Google Mapsで開く ↗
+        </a>
       </div>
 
       {/* ── マスターより ── */}
