@@ -4,8 +4,9 @@ import { useState, useCallback } from 'react'
 import ChatWindow from '@/components/ChatWindow'
 import SpotCard from '@/components/SpotCard'
 import MapEmbed from '@/components/MapEmbed'
-import LikedSpotsTray from '@/components/LikedSpotsTray'
-import { haversineKm, formatDistance, buildNavUrl, type LatLng } from '@/lib/geo'
+import JourneyPanel from '@/components/JourneyPanel'
+import RouteTimeline from '@/components/RouteTimeline'
+import { buildNavUrl, type LatLng } from '@/lib/geo'
 import type { Message, Spot, RouteInfo, SetupStep } from '@/types/chat'
 
 const INITIAL_MESSAGE: Message = {
@@ -63,45 +64,13 @@ function RouteSummaryPanel({ routeInfo, userCoords, transportation }: {
         <MapEmbed origin={userCoords} spots={spotLocations} transportation={transportation} height={220} />
       </div>
 
-      <div style={{ padding: '1.25rem 1.5rem', display: 'flex', flexDirection: 'column', gap: '1rem' }}>
-        {routeInfo.spots.map((spot, i) => {
-          const dist = userCoords ? formatDistance(haversineKm(userCoords, spot.location)) : null
-          return (
-            <div key={spot.place_id}>
-              <div style={{ display: 'flex', gap: '0.75rem', alignItems: 'flex-start' }}>
-                <div style={{
-                  width: 28, height: 28, borderRadius: '50%',
-                  background: '#facc15', color: '#000',
-                  display: 'flex', alignItems: 'center', justifyContent: 'center',
-                  fontSize: '0.75rem', fontWeight: 700, flexShrink: 0, marginTop: 2,
-                }}>
-                  {i + 1}
-                </div>
-                <div style={{ flex: 1 }}>
-                  <div style={{ fontWeight: 600, fontSize: '0.95rem', color: '#e2e8f0' }}>{spot.name}</div>
-                  <div style={{ color: '#94a3b8', fontSize: '0.78rem', marginTop: 2 }}>{spot.address}</div>
-                  <div style={{ display: 'flex', gap: '0.8rem', flexWrap: 'wrap', marginTop: 3 }}>
-                    {spot.estimated_stay_minutes && (
-                      <span style={{ color: '#64748b', fontSize: '0.75rem' }}>
-                        ⏱ 滞在目安 {spot.estimated_stay_minutes}分
-                      </span>
-                    )}
-                    {dist && (
-                      <span style={{ color: '#a5b4fc', fontSize: '0.75rem' }}>
-                        📏 現在地から{dist}
-                      </span>
-                    )}
-                  </div>
-                </div>
-              </div>
-              {i < routeInfo.travel_times.length && (
-                <div style={{ marginLeft: 14, marginTop: '0.4rem', marginBottom: '0.1rem', color: '#38bdf8', fontSize: '0.76rem', paddingLeft: '0.5rem', borderLeft: '2px solid rgba(56,189,248,0.25)' }}>
-                  ↓ 次まで約 {routeInfo.travel_times[i]}分
-                </div>
-              )}
-            </div>
-          )
-        })}
+      <div style={{ padding: '1.25rem 1.5rem' }}>
+        <RouteTimeline
+          stops={routeInfo.spots}
+          userCoords={userCoords}
+          legMinutes={routeInfo.travel_times}
+          transportation={transportation}
+        />
       </div>
 
       {/* Google Mapsナビ */}
@@ -156,6 +125,7 @@ export default function Home() {
   const [chatPhase, setChatPhase]     = useState<'collecting' | 'done'>('collecting')
   const [isLoading, setIsLoading]     = useState(false)
   const [currentSpot, setCurrentSpot] = useState<Spot | null>(null)
+  const [selectedSpot, setSelectedSpot] = useState<Spot | null>(null)
   const [spotMessage, setSpotMessage] = useState<string>('')
   const [transportation, setTransportation] = useState<'walking' | 'driving'>('walking')
   const [userCoords, setUserCoords] = useState<LatLng | null>(null)
@@ -182,6 +152,7 @@ export default function Home() {
     if (json.current_suggestion) {
       setCurrentSpot(json.current_suggestion)
       setSpotMessage(json.message)
+      setSelectedSpot(null) // 新しい提案が来たら手動選択を解除して提案を表示
     }
   }, [push])
 
@@ -259,11 +230,13 @@ export default function Home() {
     }
   }, [setupStep, threadId, isLoading, push, handleMoodSelect, applyResponse])
 
-  // 経由候補リストからスポットを選んで詳細表示を切り替える
-  const handleSelectLikedSpot = useCallback((spot: Spot) => {
-    setCurrentSpot(spot)
-    setSpotMessage('')
+  // タイムラインのスポットをクリックして詳細表示を切り替える
+  const handleSelectSpot = useCallback((spot: Spot) => {
+    setSelectedSpot(spot)
   }, [])
+
+  // 表示するスポット: 手動選択があればそれを優先、なければ提案中のスポット
+  const displayedSpot = selectedSpot ?? currentSpot
 
   // ── レンダリング ────────────────────────────────────────────────
 
@@ -291,15 +264,24 @@ export default function Home() {
         <div style={{ width: '100%', maxWidth: 520 }}>
           {chatPhase === 'done' && routeInfo ? (
             <RouteSummaryPanel routeInfo={routeInfo} userCoords={userCoords} transportation={transportation} />
-          ) : currentSpot ? (
+          ) : displayedSpot ? (
             <>
-              <SpotCard spot={currentSpot} masterMessage={spotMessage} transportation={transportation} userCoords={userCoords} />
-              <LikedSpotsTray
-                spots={likedSpots}
-                currentPlaceId={currentSpot.place_id}
+              <JourneyPanel
                 userCoords={userCoords}
-                onSelect={handleSelectLikedSpot}
+                likedSpots={likedSpots}
+                suggestion={currentSpot}
+                transportation={transportation}
+                activeId={displayedSpot.place_id}
+                onSelect={handleSelectSpot}
               />
+              <div style={{ marginTop: '1rem' }}>
+                <SpotCard
+                  spot={displayedSpot}
+                  masterMessage={displayedSpot.place_id === currentSpot?.place_id ? spotMessage : undefined}
+                  transportation={transportation}
+                  userCoords={userCoords}
+                />
+              </div>
             </>
           ) : (
             <DetailPlaceholder />

@@ -1,7 +1,6 @@
 'use client'
 
 import type { Spot } from '@/types/chat'
-import MapEmbed from '@/components/MapEmbed'
 import { haversineKm, formatDistance, buildPlaceUrl, type LatLng } from '@/lib/geo'
 
 const PRICE_LABELS: Record<number, string> = {
@@ -121,28 +120,16 @@ export default function SpotCard({ spot, masterMessage, transportation = 'walkin
                 {PRICE_LABELS[spot.price_level]}
               </span>
             )}
+            <a
+              href={buildPlaceUrl(spot.location, spot.place_id)}
+              target="_blank"
+              rel="noopener noreferrer"
+              style={{ color: '#94a3b8', textDecoration: 'none', fontWeight: 600 }}
+            >
+              地図で開く ↗
+            </a>
           </div>
         </div>
-      </div>
-
-      {/* ── 地図（現在地からの経路） ── */}
-      <div style={{ borderBottom: '1px solid rgba(255,255,255,0.06)', position: 'relative' }}>
-        <MapEmbed origin={userCoords ?? null} spots={[spot.location]} transportation={transportation} height={180} />
-        <a
-          href={buildPlaceUrl(spot.location, spot.place_id)}
-          target="_blank"
-          rel="noopener noreferrer"
-          style={{
-            position: 'absolute', right: 10, bottom: 10,
-            fontSize: '0.72rem', fontWeight: 600,
-            color: '#e2e8f0', textDecoration: 'none',
-            background: 'rgba(15,20,35,0.9)',
-            border: '1px solid rgba(255,255,255,0.15)',
-            borderRadius: 16, padding: '4px 10px',
-          }}
-        >
-          Google Mapsで開く ↗
-        </a>
       </div>
 
       {/* ── マスターより ── */}
