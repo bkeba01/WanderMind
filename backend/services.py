@@ -78,39 +78,184 @@ def fetch_nearby_places(lat: float, lng: float, api_key: str, category_type: str
 # ==========================================
 # 3. Directions API (移動時間の算出)
 # ==========================================
+def _call_routes_api(
+    origin_lat: float, origin_lng: float,
+    dest_lat: float, dest_lng: float,
+    mode: str, api_key: str,
+) -> int | None:
+    """Routes API (New) で移動時間（分）を取得。失敗時は None を返す。"""
+    from datetime import datetime, timezone, timedelta
+
+    mode_map = {"transit": "TRANSIT", "driving": "DRIVE", "walking": "WALK"}
+    travel_mode = mode_map.get(mode, "DRIVE")
+
+    url = "https://routes.googleapis.com/directions/v2:computeRoutes"
+    headers = {
+        "Content-Type": "application/json",
+        "X-Goog-Api-Key": api_key,
+        # transit では legs.duration も必要
+        "X-Goog-FieldMask": "routes.duration,routes.legs.duration,routes.distanceMeters",
+    }
+    body = {
+        "origin":      {"location": {"latLng": {"latitude": origin_lat, "longitude": origin_lng}}},
+        "destination": {"location": {"latLng": {"latitude": dest_lat,   "longitude": dest_lng}}},
+        "travelMode": travel_mode,
+    }
+    if travel_mode == "TRANSIT":
+        dep = datetime.now(timezone.utc) + timedelta(minutes=10)
+        body["departureTime"] = dep.strftime("%Y-%m-%dT%H:%M:%SZ")
+        # 使用する交通機関を明示（省略すると空ルートになることがある）
+        body["transitPreferences"] = {
+            "allowedTravelModes": ["BUS", "SUBWAY", "TRAIN", "LIGHT_RAIL", "RAIL"]
+        }
+
+    try:
+        res = requests.post(url, headers=headers, json=body, timeout=10).json()
+        routes = res.get("routes", [])
+        if routes:
+            route = routes[0]
+            # routes.duration → routes.legs[0].duration の順で取得
+            duration_str = route.get("duration") or ""
+            if not duration_str and route.get("legs"):
+                duration_str = route["legs"][0].get("duration", "0s")
+            secs = int(str(duration_str).rstrip("s"))
+            return max(1, secs // 60)
+        err = res.get("error", {})
+        err_msg = str(err.get("message", ""))
+        err_status = str(err.get("status", ""))
+        print(f"[Routes API] mode={mode} routes empty | status={err_status} | msg={err_msg[:200]} | raw={str(res)[:200]}")
+        return None
+    except Exception as e:
+        print(f"[Routes API] mode={mode} exception type={type(e).__name__}: {e}")
+        return None
+
+
+def _haversine_minutes(lat1: float, lng1: float, lat2: float, lng2: float, mode: str) -> int:
+    """直線距離から移動時間（分）を推定するフォールバック"""
+    import math
+    R = 6371.0
+    dlat = math.radians(lat2 - lat1)
+    dlng = math.radians(lng2 - lng1)
+    a = (math.sin(dlat / 2) ** 2
+         + math.cos(math.radians(lat1)) * math.cos(math.radians(lat2)) * math.sin(dlng / 2) ** 2)
+    dist_km = R * 2 * math.asin(math.sqrt(a))
+    speed = {"transit": 0.5, "driving": 0.6, "walking": 0.08}.get(mode, 0.4)
+    return max(3, int(dist_km / speed))
+
+
 def calculate_route_times(api_key: str, start_lat: float, start_lng: float, destinations: list[dict], transportation: str) -> list[int]:
-    """現在地 -> 目的地1 -> 目的地2... の各区間の移動時間（分）のリストを返す"""
-    print(f"🚗 [FETCH] Directions APIで移動時間を計算中... (手段: {transportation})")
+    """現在地 -> 目的地1 -> ... の各区間の移動時間（分）を Routes API (New) で取得"""
     times = []
-    
-    # transportation mapping for Directions API (driving, walking, bicycling, transit)
-    mode = "walking"
-    if "driving" in transportation.lower() or "車" in transportation:
-        mode = "driving"
-    elif "transit" in transportation.lower() or "電車" in transportation:
-        mode = "transit"
-        
+
+    # 日本では transit API がデータを返さないため walking / driving のみ
+    primary = "driving" if ("driving" in transportation.lower() or "車" in transportation) else "walking"
+    fallback_chain = {
+        "driving": ["driving", "walking"],
+        "walking": ["walking"],
+    }
+
     current_lat, current_lng = start_lat, start_lng
-    
+
     for dest in destinations:
         dest_lat = dest["location"]["latitude"]
         dest_lng = dest["location"]["longitude"]
-        
-        url = f"https://maps.googleapis.com/maps/api/directions/json?origin={current_lat},{current_lng}&destination={dest_lat},{dest_lng}&mode={mode}&language=ja&key={api_key}"
-        try:
-            res = requests.get(url, timeout=5).json()
-            if res.get("status") == "OK":
-                duration_seconds = res["routes"][0]["legs"][0]["duration"]["value"]
-                times.append(int(duration_seconds / 60))
-            else:
-                times.append(15) # フォールバック
-        except Exception as e:
-            print(f"⚠️ [WARN] 移動時間計算エラー: {e}")
-            times.append(15) # フォールバック
-            
+
+        print(f"[Routes] origin=({current_lat:.4f},{current_lng:.4f}) dest=({dest_lat:.4f},{dest_lng:.4f}) primary={primary}")
+
+        if dest_lat == 0.0 and dest_lng == 0.0:
+            est = _haversine_minutes(current_lat, current_lng, dest_lat, dest_lng, primary)
+            print(f"[Routes] 目的地座標 0,0 -> 推定{est}分")
+            times.append(est)
+            continue
+
+        result_mins = None
+        for mode in fallback_chain.get(primary, [primary]):
+            result_mins = _call_routes_api(current_lat, current_lng, dest_lat, dest_lng, mode, api_key)
+            if result_mins is not None:
+                print(f"[Routes] OK mode={mode} -> {result_mins}分")
+                break
+            print(f"[Routes] mode={mode} 失敗、次を試みる...")
+
+        if result_mins is None:
+            result_mins = _haversine_minutes(current_lat, current_lng, dest_lat, dest_lng, primary)
+            print(f"[Routes] 全モード失敗 -> 推定{result_mins}分")
+
+        times.append(result_mins)
         current_lat, current_lng = dest_lat, dest_lng
-        
+
     return times
+
+
+# ==========================================
+# 7. Google Places Details API (New) – 写真・レビュー・価格
+# ==========================================
+def get_place_details(place_id: str, api_key: str) -> dict:
+    """スポットの詳細情報（写真・レビュー・価格帯・滞在時間）を取得"""
+    url = f"https://places.googleapis.com/v1/places/{place_id}"
+    headers = {
+        "X-Goog-Api-Key": api_key,
+        "X-Goog-FieldMask": "id,displayName,photos,rating,priceLevel,reviews,editorialSummary,types",
+    }
+    try:
+        res = requests.get(url, headers=headers, params={"languageCode": "ja"}, timeout=8)
+        if res.status_code != 200:
+            print(f"[Place Details] {res.status_code}: {res.text[:200]}")
+            return {}
+        data = res.json()
+
+        photo_url = None
+        if data.get("photos"):
+            photo_name = data["photos"][0]["name"]
+            photo_url = (
+                f"https://places.googleapis.com/v1/{photo_name}/media"
+                f"?maxHeightPx=600&key={api_key}"
+            )
+
+        price_map = {
+            "PRICE_LEVEL_FREE": 0,
+            "PRICE_LEVEL_INEXPENSIVE": 1,
+            "PRICE_LEVEL_MODERATE": 2,
+            "PRICE_LEVEL_EXPENSIVE": 3,
+            "PRICE_LEVEL_VERY_EXPENSIVE": 4,
+        }
+        price_level = price_map.get(data.get("priceLevel", ""), None)
+
+        reviews = []
+        for r in data.get("reviews", [])[:3]:
+            text = r.get("text", {}).get("text", "")
+            if text:
+                reviews.append(text[:80] + ("..." if len(text) > 80 else ""))
+
+        editorial = data.get("editorialSummary", {}).get("text", "")
+        stay = _estimate_stay_minutes(data.get("types", []))
+
+        return {
+            "photo_url": photo_url,
+            "price_level": price_level,
+            "editorial_summary": editorial,
+            "review_snippets": reviews,
+            "estimated_stay_minutes": stay,
+        }
+    except Exception as e:
+        print(f"[get_place_details] {e}")
+        return {}
+
+
+def _estimate_stay_minutes(types: list) -> int:
+    """場所タイプから滞在時間（分）を推定"""
+    stay_map = {
+        "restaurant": 60, "cafe": 45, "coffee_shop": 45, "bakery": 30,
+        "museum": 90, "art_gallery": 60, "aquarium": 90, "zoo": 120,
+        "park": 45, "national_park": 60,
+        "amusement_park": 120, "tourist_attraction": 60,
+        "shopping_mall": 60, "store": 30, "clothing_store": 45,
+        "spa": 90, "gym": 60,
+        "movie_theater": 120, "night_club": 120, "bar": 60,
+    }
+    for t in types:
+        if t in stay_map:
+            return stay_map[t]
+    return 45
 
 # ==========================================
 # 4. 意図抽出: 気分からカテゴリへの変換 (Gemini)

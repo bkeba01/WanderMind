@@ -1,16 +1,22 @@
 import os
 import json
+import uuid
 from fastapi import FastAPI, HTTPException, status
 from fastapi.middleware.cors import CORSMiddleware
 from dotenv import load_dotenv
+from pydantic import BaseModel
+from typing import Optional
+
+# 環境変数の読み込み（graphモジュールのインポート前に必須）
+load_dotenv(dotenv_path="../.env")
 
 from schemas import (
-    GeneratePlanRequest, 
-    GeneratePlanResponse, 
-    GeneratePlanResponseData, 
-    TourStop, 
+    GeneratePlanRequest,
+    GeneratePlanResponse,
+    GeneratePlanResponseData,
+    TourStop,
     Destination,
-    RefinePlanRequest
+    RefinePlanRequest,
 )
 from services import (
     get_current_weather,
@@ -18,11 +24,10 @@ from services import (
     fetch_nearby_places,
     calculate_route_times,
     generate_plan_with_gemini,
-    refine_plan_with_gemini
+    refine_plan_with_gemini,
 )
-
-# 環境変数の読み込み
-load_dotenv(dotenv_path="../.env")
+from graph.builder import compiled_graph
+from langchain_core.messages import HumanMessage, AIMessage
 
 app = FastAPI(title="WanderMind API", version="0.1.0")
 
@@ -166,9 +171,104 @@ def refine_plan(request: RefinePlanRequest):
         raise HTTPException(status_code=500, detail=f"再生成失敗: {str(e)}")
         
     response_data = _build_response_data(
-        plan_result, chosen_places, weather_info, 
-        orig_req.location.latitude, orig_req.location.longitude, 
+        plan_result, chosen_places, weather_info,
+        orig_req.location.latitude, orig_req.location.longitude,
         orig_req.transportation, google_key
     )
-    
+
     return GeneratePlanResponse(status="success", data=response_data)
+
+
+# ============================================================
+# 会話型チャット API（LangGraph）
+# ============================================================
+
+class StartChatRequest(BaseModel):
+    message: str
+    latitude: float
+    longitude: float
+    transportation: str = "transit"
+
+
+class ContinueChatRequest(BaseModel):
+    message: str
+
+
+class ChatResponse(BaseModel):
+    thread_id: str
+    message: str
+    phase: str
+    liked_spots: list[dict]
+    route_info: Optional[dict] = None
+    current_suggestion: Optional[dict] = None
+
+
+@app.post("/api/v1/chat/session", response_model=ChatResponse)
+def start_chat(request: StartChatRequest):
+    """会話セッションを開始し、最初のスポット提案を返す。"""
+    thread_id = str(uuid.uuid4())
+    config = {"configurable": {"thread_id": thread_id}}
+
+    try:
+        result = compiled_graph.invoke(
+            {
+                "messages": [HumanMessage(content=request.message)],
+                "phase": "start",
+                "user_lat": request.latitude,
+                "user_lng": request.longitude,
+                "transportation": request.transportation,
+                "initial_mood": "",
+                "current_mood": "",
+                "liked_spots": [],
+                "suggested_place_ids": [],
+                "current_suggestion": None,
+                "last_reaction": "",
+                "last_mood_hint": "",
+                "free_time_minutes": 90,
+                "search_radius_m": 5000,
+                "search_center_lat": request.latitude,
+                "search_center_lng": request.longitude,
+                "route_info": None,
+            },
+            config=config,
+        )
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"グラフ実行エラー: {str(e)}")
+
+    ai_msg = next(
+        (m for m in reversed(result["messages"]) if isinstance(m, AIMessage)), None
+    )
+    return ChatResponse(
+        thread_id=thread_id,
+        message=ai_msg.content if ai_msg else "こんにちは！どんな気分ですか？",
+        phase=result.get("phase", "collecting"),
+        liked_spots=result.get("liked_spots", []),
+        route_info=result.get("route_info"),
+        current_suggestion=result.get("current_suggestion"),
+    )
+
+
+@app.post("/api/v1/chat/{thread_id}", response_model=ChatResponse)
+def continue_chat(thread_id: str, request: ContinueChatRequest):
+    """既存セッションにメッセージを送り、次のAI応答を返す。"""
+    config = {"configurable": {"thread_id": thread_id}}
+
+    try:
+        result = compiled_graph.invoke(
+            {"messages": [HumanMessage(content=request.message)]},
+            config=config,
+        )
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"グラフ実行エラー: {str(e)}")
+
+    ai_msg = next(
+        (m for m in reversed(result["messages"]) if isinstance(m, AIMessage)), None
+    )
+    return ChatResponse(
+        thread_id=thread_id,
+        message=ai_msg.content if ai_msg else "もう一度言ってもらえる？",
+        phase=result.get("phase", "collecting"),
+        liked_spots=result.get("liked_spots", []),
+        route_info=result.get("route_info"),
+        current_suggestion=result.get("current_suggestion"),
+    )
