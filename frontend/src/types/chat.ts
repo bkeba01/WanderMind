@@ -10,6 +10,8 @@ export type Spot = {
   review_snippets?: string[]
   estimated_stay_minutes?: number
   travel_time_minutes?: number | null
+  open_now?: boolean | null
+  opening_hours_today?: string | null
 }
 
 export type RouteInfo = {

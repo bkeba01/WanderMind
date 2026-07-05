@@ -77,6 +77,28 @@ export default function SpotCard({ spot, masterMessage, transportation = 'walkin
             <h2 style={{ fontWeight: 700, fontSize: '1.25rem', color: '#fff', lineHeight: 1.25, margin: 0, flex: 1 }}>
               {spot.name}
             </h2>
+            {spot.open_now != null && (
+              <div
+                title={spot.opening_hours_today ?? undefined}
+                style={{
+                  display: 'flex', alignItems: 'center', gap: 5,
+                  background: spot.open_now ? 'rgba(74,222,128,0.14)' : 'rgba(248,113,113,0.14)',
+                  border: `1px solid ${spot.open_now ? 'rgba(74,222,128,0.4)' : 'rgba(248,113,113,0.4)'}`,
+                  borderRadius: 20, padding: '4px 10px', flexShrink: 0,
+                }}
+              >
+                <span style={{
+                  width: 7, height: 7, borderRadius: '50%',
+                  background: spot.open_now ? '#4ade80' : '#f87171',
+                }} />
+                <span style={{
+                  color: spot.open_now ? '#4ade80' : '#f87171',
+                  fontWeight: 700, fontSize: '0.78rem',
+                }}>
+                  {spot.open_now ? '営業中' : '営業時間外'}
+                </span>
+              </div>
+            )}
             {rating && (
               <div style={{
                 display: 'flex', alignItems: 'center', gap: 4,
@@ -118,6 +140,11 @@ export default function SpotCard({ spot, masterMessage, transportation = 'walkin
             {spot.price_level != null && PRICE_LABELS[spot.price_level] && (
               <span style={{ color: '#facc15', fontWeight: 600 }}>
                 {PRICE_LABELS[spot.price_level]}
+              </span>
+            )}
+            {spot.opening_hours_today && (
+              <span style={{ color: '#94a3b8' }}>
+                🕐 {spot.opening_hours_today}
               </span>
             )}
             <a

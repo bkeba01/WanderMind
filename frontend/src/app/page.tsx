@@ -1,6 +1,6 @@
 'use client'
 
-import { useState, useCallback } from 'react'
+import { useState, useCallback, useEffect } from 'react'
 import ChatWindow from '@/components/ChatWindow'
 import SpotCard from '@/components/SpotCard'
 import MapEmbed from '@/components/MapEmbed'
@@ -114,6 +114,40 @@ function DetailPlaceholder() {
   )
 }
 
+// ── スポット探索中のスケルトン ──────────────────────────────────
+
+function SpotSkeleton() {
+  const bar = (w: string, h = 12) => (
+    <div style={{
+      width: w, height: h, borderRadius: 6,
+      background: 'rgba(255,255,255,0.06)',
+      animation: 'skeletonPulse 1.4s ease-in-out infinite',
+    }} />
+  )
+  return (
+    <div style={{
+      borderRadius: 20, overflow: 'hidden',
+      background: 'rgba(15,20,35,0.95)',
+      border: '1px solid rgba(255,255,255,0.08)',
+    }}>
+      <div style={{
+        height: 200,
+        background: 'rgba(255,255,255,0.04)',
+        animation: 'skeletonPulse 1.4s ease-in-out infinite',
+        display: 'flex', alignItems: 'center', justifyContent: 'center',
+        fontSize: '0.85rem', color: '#64748b',
+      }}>
+        ☕ マスターが良いところを思い出しています…
+      </div>
+      <div style={{ padding: '1.25rem', display: 'flex', flexDirection: 'column', gap: '0.7rem' }}>
+        {bar('60%', 18)}
+        {bar('90%')}
+        {bar('75%')}
+      </div>
+    </div>
+  )
+}
+
 // ── メインページ ─────────────────────────────────────────────────
 
 export default function Home() {
@@ -129,12 +163,69 @@ export default function Home() {
   const [spotMessage, setSpotMessage] = useState<string>('')
   const [transportation, setTransportation] = useState<'walking' | 'driving'>('walking')
   const [userCoords, setUserCoords] = useState<LatLng | null>(null)
+  const [quickReplies, setQuickReplies] = useState<string[]>([])
 
   const [pendingMood, setPendingMood] = useState('')
   const [pendingTime, setPendingTime] = useState(0)
 
   const push = useCallback((...msgs: Message[]) => {
     setMessages(prev => [...prev, ...msgs])
+  }, [])
+
+  // ── セッション復元（リロード後も会話を継続） ────────────────
+  useEffect(() => {
+    const tid = localStorage.getItem('wander_thread_id')
+    if (!tid) return
+
+    ;(async () => {
+      try {
+        const res = await fetch(`${API_URL}/api/v1/chat/${tid}`)
+        if (!res.ok) throw new Error('セッションが見つかりません')
+        const json = await res.json()
+
+        setThreadId(tid)
+        setMessages(
+          (json.messages as { role: 'ai' | 'user'; content: string }[])
+            .map(m => ({ id: makeId(), role: m.role, content: m.content }))
+        )
+        setLikedSpots(json.liked_spots ?? [])
+        setRouteInfo(json.route_info ?? null)
+        setChatPhase(json.phase === 'done' ? 'done' : 'collecting')
+        setQuickReplies(json.quick_replies ?? [])
+        setTransportation(json.transportation === 'driving' ? 'driving' : 'walking')
+        if (json.current_suggestion) {
+          setCurrentSpot(json.current_suggestion)
+          const lastAi = [...json.messages].reverse().find(
+            (m: { role: string }) => m.role === 'ai'
+          )
+          setSpotMessage(lastAi?.content ?? '')
+        }
+        const coords = localStorage.getItem('wander_coords')
+        if (coords) setUserCoords(JSON.parse(coords))
+        setSetupStep('chatting')
+      } catch {
+        localStorage.removeItem('wander_thread_id')
+        localStorage.removeItem('wander_coords')
+      }
+    })()
+  }, [])
+
+  // ── 新しく相談し直す ─────────────────────────────────────────
+  const handleReset = useCallback(() => {
+    localStorage.removeItem('wander_thread_id')
+    localStorage.removeItem('wander_coords')
+    setMessages([INITIAL_MESSAGE])
+    setSetupStep('mood')
+    setThreadId(null)
+    setLikedSpots([])
+    setRouteInfo(null)
+    setChatPhase('collecting')
+    setCurrentSpot(null)
+    setSelectedSpot(null)
+    setSpotMessage('')
+    setQuickReplies([])
+    setPendingMood('')
+    setPendingTime(0)
   }, [])
 
   const applyResponse = useCallback((json: {
@@ -144,10 +235,12 @@ export default function Home() {
     liked_spots: Spot[]
     route_info?: RouteInfo | null
     current_suggestion?: Spot | null
+    quick_replies?: string[]
   }) => {
     setLikedSpots(json.liked_spots ?? [])
     setRouteInfo(json.route_info ?? null)
     setChatPhase(json.phase === 'done' ? 'done' : 'collecting')
+    setQuickReplies(json.quick_replies ?? [])
     push(aiMsg(json.message))
     if (json.current_suggestion) {
       setCurrentSpot(json.current_suggestion)
@@ -196,6 +289,9 @@ export default function Home() {
       if (!res.ok) throw new Error(await res.text())
       const json = await res.json()
       setThreadId(json.thread_id)
+      // リロード復元用に保存
+      localStorage.setItem('wander_thread_id', json.thread_id)
+      localStorage.setItem('wander_coords', JSON.stringify({ latitude: coords.latitude, longitude: coords.longitude }))
       applyResponse(json)
     } catch (err) {
       console.error(err)
@@ -207,7 +303,8 @@ export default function Home() {
   }, [pendingMood, pendingTime, push, applyResponse])
 
   // 会話中のメッセージ送信
-  const handleSend = useCallback(async (text: string) => {
+  // isQuickReply: ボタン由来なら true（バックエンドで固定分類）、自由入力なら false（LLMが意図解析）
+  const handleSend = useCallback(async (text: string, isQuickReply = false) => {
     if (setupStep === 'mood') { handleMoodSelect(text); return }
     if (!threadId || isLoading) return
 
@@ -218,7 +315,7 @@ export default function Home() {
       const res = await fetch(`${API_URL}/api/v1/chat/${threadId}`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ message: text }),
+        body: JSON.stringify({ message: text, is_quick_reply: isQuickReply }),
       })
       if (!res.ok) throw new Error(await res.text())
       applyResponse(await res.json())
@@ -234,6 +331,25 @@ export default function Home() {
   const handleSelectSpot = useCallback((spot: Spot) => {
     setSelectedSpot(spot)
   }, [])
+
+  // 承認済みスポットの取り消し（❌）
+  const handleRemoveSpot = useCallback(async (spot: Spot) => {
+    if (!threadId || isLoading) return
+    try {
+      const res = await fetch(
+        `${API_URL}/api/v1/chat/${threadId}/spots/${spot.place_id}`,
+        { method: 'DELETE' },
+      )
+      if (!res.ok) throw new Error(await res.text())
+      const json = await res.json()
+      setLikedSpots(json.liked_spots ?? [])
+      setSelectedSpot(prev => (prev?.place_id === spot.place_id ? null : prev))
+      push(aiMsg(`了解、「${spot.name}」は無しにしておくよ。`))
+    } catch (err) {
+      console.error(err)
+      push(aiMsg('すまんね、うまく外せなかったみたいだ...'))
+    }
+  }, [threadId, isLoading, push])
 
   // 表示するスポット: 手動選択があればそれを優先、なければ提案中のスポット
   const displayedSpot = selectedSpot ?? currentSpot
@@ -252,10 +368,12 @@ export default function Home() {
           routeInfo={routeInfo}
           chatPhase={chatPhase}
           isLoading={isLoading}
+          dynamicReplies={quickReplies}
           onMoodSelect={handleMoodSelect}
           onTimeSelect={handleTimeSelect}
           onTransportSelect={handleTransportSelect}
           onSend={handleSend}
+          onReset={handleReset}
         />
       </div>
 
@@ -264,6 +382,8 @@ export default function Home() {
         <div style={{ width: '100%', maxWidth: 520 }}>
           {chatPhase === 'done' && routeInfo ? (
             <RouteSummaryPanel routeInfo={routeInfo} userCoords={userCoords} transportation={transportation} />
+          ) : isLoading && setupStep === 'chatting' ? (
+            <SpotSkeleton />
           ) : displayedSpot ? (
             <>
               <JourneyPanel
@@ -273,6 +393,7 @@ export default function Home() {
                 transportation={transportation}
                 activeId={displayedSpot.place_id}
                 onSelect={handleSelectSpot}
+                onRemove={handleRemoveSpot}
               />
               <div style={{ marginTop: '1rem' }}>
                 <SpotCard

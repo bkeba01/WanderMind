@@ -192,6 +192,8 @@ class StartChatRequest(BaseModel):
 
 class ContinueChatRequest(BaseModel):
     message: str
+    # True: クイックリプライボタン由来（固定分類）/ False: 自由入力（Gemini function calling で意図解析）
+    is_quick_reply: bool = False
 
 
 class ChatResponse(BaseModel):
@@ -201,6 +203,7 @@ class ChatResponse(BaseModel):
     liked_spots: list[dict]
     route_info: Optional[dict] = None
     current_suggestion: Optional[dict] = None
+    quick_replies: list[str] = []
 
 
 @app.post("/api/v1/chat/session", response_model=ChatResponse)
@@ -229,6 +232,12 @@ def start_chat(request: StartChatRequest):
                 "search_center_lat": request.latitude,
                 "search_center_lng": request.longitude,
                 "route_info": None,
+                "weather": "",
+                "rejected_spot_names": [],
+                "consecutive_rejects": 0,
+                "time_used_minutes": 0,
+                "quick_replies": [],
+                "candidate_spots": [],
             },
             config=config,
         )
@@ -245,7 +254,92 @@ def start_chat(request: StartChatRequest):
         liked_spots=result.get("liked_spots", []),
         route_info=result.get("route_info"),
         current_suggestion=result.get("current_suggestion"),
+        quick_replies=result.get("quick_replies") or [],
     )
+
+
+class ChatHistoryResponse(BaseModel):
+    thread_id: str
+    messages: list[dict]
+    phase: str
+    liked_spots: list[dict]
+    route_info: Optional[dict] = None
+    current_suggestion: Optional[dict] = None
+    quick_replies: list[str] = []
+    transportation: str = "walking"
+
+
+@app.get("/api/v1/chat/{thread_id}", response_model=ChatHistoryResponse)
+def get_chat_history(thread_id: str):
+    """セッション復元用: スレッドの会話履歴と状態を返す。"""
+    config = {"configurable": {"thread_id": thread_id}}
+    snapshot = compiled_graph.get_state(config)
+    state = snapshot.values
+    if not state:
+        raise HTTPException(status_code=404, detail="セッションが見つかりません")
+
+    messages = [
+        {"role": "ai" if isinstance(m, AIMessage) else "user", "content": m.content}
+        for m in state.get("messages", [])
+    ]
+    return ChatHistoryResponse(
+        thread_id=thread_id,
+        messages=messages,
+        phase=state.get("phase", "collecting"),
+        liked_spots=state.get("liked_spots", []),
+        route_info=state.get("route_info"),
+        current_suggestion=state.get("current_suggestion"),
+        quick_replies=state.get("quick_replies") or [],
+        transportation=state.get("transportation", "walking"),
+    )
+
+
+class RemoveSpotResponse(BaseModel):
+    liked_spots: list[dict]
+    time_used_minutes: int
+
+
+@app.delete("/api/v1/chat/{thread_id}/spots/{place_id}", response_model=RemoveSpotResponse)
+def remove_liked_spot(thread_id: str, place_id: str):
+    """承認済みスポットの取り消し。検索中心・残り時間も再計算する。"""
+    from graph.nodes import _free_time_to_radius, _centroid
+
+    config = {"configurable": {"thread_id": thread_id}}
+    snapshot = compiled_graph.get_state(config)
+    state = snapshot.values
+    if not state:
+        raise HTTPException(status_code=404, detail="セッションが見つかりません")
+
+    liked = state.get("liked_spots", [])
+    new_liked = [s for s in liked if s["place_id"] != place_id]
+    if len(new_liked) == len(liked):
+        raise HTTPException(status_code=404, detail="スポットが見つかりません")
+
+    time_used = sum(
+        s.get("estimated_stay_minutes", 45) + (s.get("travel_time_minutes") or 0)
+        for s in new_liked
+    )
+    base_radius = _free_time_to_radius(state.get("free_time_minutes", 90))
+    if new_liked:
+        clat, clng = _centroid(new_liked)
+        radius = max(1500, int(base_radius * (0.85 ** (len(new_liked) - 1))))
+    else:
+        clat, clng = state["user_lat"], state["user_lng"]
+        radius = base_radius
+
+    compiled_graph.update_state(
+        config,
+        {
+            "liked_spots": new_liked,
+            "time_used_minutes": time_used,
+            "search_center_lat": clat,
+            "search_center_lng": clng,
+            "search_radius_m": radius,
+            "candidate_spots": [],
+        },
+        as_node="spot_accumulator",
+    )
+    return RemoveSpotResponse(liked_spots=new_liked, time_used_minutes=time_used)
 
 
 @app.post("/api/v1/chat/{thread_id}", response_model=ChatResponse)
@@ -255,7 +349,10 @@ def continue_chat(thread_id: str, request: ContinueChatRequest):
 
     try:
         result = compiled_graph.invoke(
-            {"messages": [HumanMessage(content=request.message)]},
+            {
+                "messages": [HumanMessage(content=request.message)],
+                "is_quick_reply": request.is_quick_reply,
+            },
             config=config,
         )
     except Exception as e:
@@ -271,4 +368,5 @@ def continue_chat(thread_id: str, request: ContinueChatRequest):
         liked_spots=result.get("liked_spots", []),
         route_info=result.get("route_info"),
         current_suggestion=result.get("current_suggestion"),
+        quick_replies=result.get("quick_replies") or [],
     )

@@ -26,12 +26,17 @@ const TRANSPORT_OPTIONS = [
   { emoji: '🚗', label: '車', value: 'driving' },
 ]
 
-const CHAT_QUICK_REPLIES: QuickReply[] = [
+/** 常に表示する基本アクション（承認・拒否・確定） */
+const CORE_QUICK_REPLIES: QuickReply[] = [
   { label: '👍 いいね！', value: 'いいね' },
   { label: '👎 違う', value: '違う' },
+  { label: '✅ それでいこう！', value: 'それでいこう' },
+]
+
+/** 提案が来る前のデフォルト候補（dynamicReplies が無いとき用） */
+const DEFAULT_MOOD_REPLIES: QuickReply[] = [
   { label: '🔥 もっとはしゃぎたい', value: 'もっとはしゃぎたい' },
   { label: '🌿 静かな場所がいい', value: '静かな場所がいい' },
-  { label: '✅ それでいこう！', value: 'それでいこう' },
 ]
 
 // ── サブコンポーネント ────────────────────────────────────────
@@ -62,13 +67,25 @@ function MessageBubble({ msg }: { msg: Message }) {
   )
 }
 
+const THINKING_PHRASES = [
+  'ちょっと待ちなよ、いいところを思い出すから…',
+  'ふむ、この辺だと…',
+  'とっておきの場所を探しているよ…',
+  'こういう気分の日はねぇ…',
+]
+
 function TypingIndicator() {
+  // マウントごとにランダムな繋ぎ台詞を1つ選ぶ
+  const [phrase] = useState(
+    () => THINKING_PHRASES[Math.floor(Math.random() * THINKING_PHRASES.length)]
+  )
   return (
     <div style={{ display: 'flex', alignItems: 'flex-end', gap: '0.5rem' }}>
       <div style={{ width: 36, height: 36, borderRadius: '50%', background: 'rgba(192,132,252,0.2)', border: '1px solid rgba(192,132,252,0.3)', display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: '1.1rem', flexShrink: 0 }}>
         ☕
       </div>
-      <div style={{ padding: '0.7rem 1rem', borderRadius: '4px 18px 18px 18px', background: 'rgba(17,24,39,0.85)', border: '1px solid rgba(255,255,255,0.07)', display: 'flex', gap: 5, alignItems: 'center' }}>
+      <div style={{ padding: '0.7rem 1rem', borderRadius: '4px 18px 18px 18px', background: 'rgba(17,24,39,0.85)', border: '1px solid rgba(255,255,255,0.07)', display: 'flex', gap: 8, alignItems: 'center' }}>
+        <span style={{ fontSize: '0.82rem', color: '#94a3b8', fontStyle: 'italic' }}>{phrase}</span>
         {[0, 1, 2].map(i => (
           <span key={i} className="typing-dot" style={{ animationDelay: `${i * 0.2}s` }} />
         ))}
@@ -112,10 +129,15 @@ type ChatWindowProps = {
   routeInfo: RouteInfo | null
   chatPhase: 'collecting' | 'done'
   isLoading: boolean
+  /** 最新の提案に応じてマスターが生成した文脈クイックリプライ */
+  dynamicReplies?: string[]
   onMoodSelect: (mood: string) => void
   onTimeSelect: (minutes: number) => void
   onTransportSelect: (transport: string) => void
-  onSend: (text: string) => void
+  /** isQuickReply: ボタン由来なら true（固定分類）、自由入力なら false（LLMが意図解析） */
+  onSend: (text: string, isQuickReply?: boolean) => void
+  /** 会話をリセットして最初からやり直す */
+  onReset?: () => void
 }
 
 export default function ChatWindow({
@@ -125,10 +147,12 @@ export default function ChatWindow({
   routeInfo,
   chatPhase,
   isLoading,
+  dynamicReplies = [],
   onMoodSelect,
   onTimeSelect,
   onTransportSelect,
   onSend,
+  onReset,
 }: ChatWindowProps) {
   const [textInput, setTextInput] = useState('')
   const bottomRef = useRef<HTMLDivElement>(null)
@@ -140,7 +164,7 @@ export default function ChatWindow({
   const handleSendText = () => {
     const trimmed = textInput.trim()
     if (!trimmed || isLoading) return
-    onSend(trimmed)
+    onSend(trimmed, false) // 自由入力 → LLM が意図解析
     setTextInput('')
   }
 
@@ -152,7 +176,7 @@ export default function ChatWindow({
         <div style={{ width: 40, height: 40, borderRadius: '50%', background: 'rgba(192,132,252,0.15)', border: '1px solid rgba(192,132,252,0.3)', display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: '1.3rem' }}>
           ☕
         </div>
-        <div>
+        <div style={{ flex: 1 }}>
           <div style={{ fontWeight: 600, fontSize: '0.95rem', color: 'var(--neon-purple)' }}>WanderMind</div>
           <div style={{ fontSize: '0.72rem', color: 'var(--text-muted)' }}>
             {chatPhase === 'done'
@@ -162,6 +186,23 @@ export default function ChatWindow({
               : 'マスターと相談中...'}
           </div>
         </div>
+        {onReset && setupStep === 'chatting' && (
+          <button
+            onClick={onReset}
+            title="新しく相談し直す"
+            style={{
+              padding: '0.35rem 0.7rem', borderRadius: 8, flexShrink: 0,
+              border: '1px solid rgba(255,255,255,0.12)',
+              background: 'rgba(255,255,255,0.04)',
+              color: 'var(--text-muted)', fontSize: '0.72rem', fontWeight: 600,
+              cursor: 'pointer', transition: 'all 0.15s',
+            }}
+            onMouseEnter={e => { (e.currentTarget as HTMLButtonElement).style.color = '#f87171'; (e.currentTarget as HTMLButtonElement).style.borderColor = 'rgba(248,113,113,0.4)' }}
+            onMouseLeave={e => { (e.currentTarget as HTMLButtonElement).style.color = 'var(--text-muted)'; (e.currentTarget as HTMLButtonElement).style.borderColor = 'rgba(255,255,255,0.12)' }}
+          >
+            🔄 新規相談
+          </button>
+        )}
       </div>
 
       {/* ── メッセージエリア ── */}
@@ -220,11 +261,16 @@ export default function ChatWindow({
           </div>
         )}
 
-        {/* 会話中のクイックリプライ */}
+        {/* 会話中のクイックリプライ（基本3択 + 提案に応じた文脈候補） */}
         {setupStep === 'chatting' && chatPhase !== 'done' && (
           <div style={{ display: 'flex', flexWrap: 'wrap', gap: '0.35rem', marginBottom: '0.6rem' }}>
-            {CHAT_QUICK_REPLIES.map(qr => (
-              <button key={qr.value} onClick={() => onSend(qr.value)} disabled={isLoading}
+            {[
+              ...CORE_QUICK_REPLIES,
+              ...(dynamicReplies.length > 0
+                ? dynamicReplies.map(r => ({ label: r, value: r }))
+                : DEFAULT_MOOD_REPLIES),
+            ].map(qr => (
+              <button key={qr.value} onClick={() => onSend(qr.value, true)} disabled={isLoading}
                 style={{ padding: '0.35rem 0.75rem', borderRadius: 20, border: '1px solid rgba(255,255,255,0.12)', background: 'rgba(255,255,255,0.04)', color: 'var(--text-color)', fontSize: '0.8rem', cursor: 'pointer', opacity: isLoading ? 0.4 : 1, transition: 'all 0.15s' }}
                 onMouseEnter={e => { if (!isLoading) (e.currentTarget as HTMLButtonElement).style.borderColor = 'var(--taxi-yellow)' }}
                 onMouseLeave={e => { (e.currentTarget as HTMLButtonElement).style.borderColor = 'rgba(255,255,255,0.12)' }}

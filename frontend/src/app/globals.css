@@ -180,6 +180,12 @@ a {
   animation: typingBounce 1.2s infinite ease-in-out;
 }
 
+/* スポット探索中のスケルトン */
+@keyframes skeletonPulse {
+  0%, 100% { opacity: 0.45; }
+  50%      { opacity: 0.95; }
+}
+
 @keyframes typingBounce {
   0%, 80%, 100% { transform: translateY(0); opacity: 0.4; }
   40%            { transform: translateY(-6px); opacity: 1; }

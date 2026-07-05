@@ -13,6 +13,7 @@ type JourneyPanelProps = {
   transportation: 'walking' | 'driving'
   activeId?: string | null
   onSelect?: (spot: Spot) => void
+  onRemove?: (spot: Spot) => void
 }
 
 /** 会話中の右パネル: 現在地→経由スポット→提案中スポットのルート全体を地図＋タイムラインで表示 */
@@ -23,6 +24,7 @@ export default function JourneyPanel({
   transportation,
   activeId,
   onSelect,
+  onRemove,
 }: JourneyPanelProps) {
   const isSuggestionNew =
     suggestion != null && !likedSpots.some(s => s.place_id === suggestion.place_id)
@@ -86,6 +88,7 @@ export default function JourneyPanel({
           activeId={activeId}
           suggestionId={isSuggestionNew && suggestion ? suggestion.place_id : null}
           onSelect={onSelect}
+          onRemove={onRemove}
         />
       </div>
 

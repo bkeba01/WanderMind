@@ -13,6 +13,8 @@ type RouteTimelineProps = {
   /** まだ確定していない「提案中」スポットのplace_id（紫でハイライト） */
   suggestionId?: string | null
   onSelect?: (spot: Spot) => void
+  /** 承認済みスポットの取り消し（提案中スポットには表示しない） */
+  onRemove?: (spot: Spot) => void
 }
 
 const NODE_COL = 30
@@ -37,6 +39,7 @@ export default function RouteTimeline({
   activeId = null,
   suggestionId = null,
   onSelect,
+  onRemove,
 }: RouteTimelineProps) {
   const travelIcon = transportation === 'driving' ? '🚗' : '🚶'
 
@@ -119,23 +122,42 @@ export default function RouteTimeline({
         return (
           <div key={spot.place_id}>
             <LegChip label={legLabel} />
-            {onSelect ? (
-              <button
-                onClick={() => onSelect(spot)}
-                style={{
-                  display: 'block', width: '100%',
-                  padding: '0.45rem 0.4rem', margin: '0 -0.4rem',
-                  borderRadius: 12,
-                  border: `1px solid ${isActive ? 'rgba(250,204,21,0.35)' : 'transparent'}`,
-                  background: isActive ? 'rgba(250,204,21,0.06)' : 'transparent',
-                  cursor: 'pointer', transition: 'all 0.15s',
-                }}
-              >
-                {row}
-              </button>
-            ) : (
-              <div style={{ padding: '0.45rem 0' }}>{row}</div>
-            )}
+            <div style={{ display: 'flex', alignItems: 'center', gap: '0.3rem' }}>
+              {onSelect ? (
+                <button
+                  onClick={() => onSelect(spot)}
+                  style={{
+                    display: 'block', flex: 1, minWidth: 0,
+                    padding: '0.45rem 0.4rem', margin: '0 -0.4rem',
+                    borderRadius: 12,
+                    border: `1px solid ${isActive ? 'rgba(250,204,21,0.35)' : 'transparent'}`,
+                    background: isActive ? 'rgba(250,204,21,0.06)' : 'transparent',
+                    cursor: 'pointer', transition: 'all 0.15s',
+                  }}
+                >
+                  {row}
+                </button>
+              ) : (
+                <div style={{ padding: '0.45rem 0', flex: 1, minWidth: 0 }}>{row}</div>
+              )}
+              {onRemove && !isSuggestion && (
+                <button
+                  onClick={() => onRemove(spot)}
+                  title="ルートから外す"
+                  aria-label={`${spot.name}をルートから外す`}
+                  style={{
+                    width: 24, height: 24, borderRadius: '50%', flexShrink: 0,
+                    border: '1px solid rgba(248,113,113,0.35)',
+                    background: 'rgba(248,113,113,0.08)',
+                    color: '#f87171', fontSize: '0.7rem', fontWeight: 700,
+                    cursor: 'pointer', lineHeight: 1,
+                    display: 'flex', alignItems: 'center', justifyContent: 'center',
+                  }}
+                >
+                  ✕
+                </button>
+              )}
+            </div>
           </div>
         )
       })}

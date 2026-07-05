@@ -194,7 +194,7 @@ def get_place_details(place_id: str, api_key: str) -> dict:
     url = f"https://places.googleapis.com/v1/places/{place_id}"
     headers = {
         "X-Goog-Api-Key": api_key,
-        "X-Goog-FieldMask": "id,displayName,photos,rating,priceLevel,reviews,editorialSummary,types",
+        "X-Goog-FieldMask": "id,displayName,photos,rating,priceLevel,reviews,editorialSummary,types,currentOpeningHours",
     }
     try:
         res = requests.get(url, headers=headers, params={"languageCode": "ja"}, timeout=8)
@@ -229,12 +229,26 @@ def get_place_details(place_id: str, api_key: str) -> dict:
         editorial = data.get("editorialSummary", {}).get("text", "")
         stay = _estimate_stay_minutes(data.get("types", []))
 
+        # 営業状況（openNow が無い場所は None = 不明）
+        hours = data.get("currentOpeningHours", {})
+        open_now = hours.get("openNow")
+        today_hours = None
+        descriptions = hours.get("weekdayDescriptions", [])
+        if descriptions:
+            from datetime import datetime
+            # weekdayDescriptions は月曜始まり
+            idx = datetime.now().weekday()
+            if idx < len(descriptions):
+                today_hours = descriptions[idx]
+
         return {
             "photo_url": photo_url,
             "price_level": price_level,
             "editorial_summary": editorial,
             "review_snippets": reviews,
             "estimated_stay_minutes": stay,
+            "open_now": open_now,
+            "opening_hours_today": today_hours,
         }
     except Exception as e:
         print(f"[get_place_details] {e}")

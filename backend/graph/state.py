@@ -17,6 +17,8 @@ class Spot(SpotBase, total=False):
     review_snippets: list
     estimated_stay_minutes: int
     travel_time_minutes: int | None
+    open_now: bool | None
+    opening_hours_today: str | None
 
 
 class WanderMindState(TypedDict):
@@ -37,3 +39,11 @@ class WanderMindState(TypedDict):
     last_reaction: str
     last_mood_hint: str
     route_info: dict | None
+    weather: str                    # 例: "晴れ・曇り 24℃"
+    rejected_spot_names: list[str]  # 拒否されたスポット名（クエリ生成で回避）
+    consecutive_rejects: int        # 連続拒否回数（2以上で好みを聞き返す）
+    time_used_minutes: int          # 承認済みスポットの滞在+移動の合計
+    quick_replies: list[str]        # 最新提案に対する文脈クイックリプライ
+    candidate_spots: list[Spot]     # 未提案の検索候補キャッシュ（REJECT 高速化）
+    next_request_hint: str          # 会話から抽出した次の具体的要望（例:「夜ご飯」「休憩」）
+    is_quick_reply: bool            # 今回のメッセージがボタン由来か（True: 固定分類 / False: LLM function calling）

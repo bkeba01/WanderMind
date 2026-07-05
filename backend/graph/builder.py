@@ -1,3 +1,5 @@
+import os
+import sqlite3
 from langgraph.graph import StateGraph, END
 from langgraph.checkpoint.memory import MemorySaver
 from graph.state import WanderMindState
@@ -10,6 +12,7 @@ from graph.nodes import (
     route_reaction,
     mood_updater_node,
     spot_accumulator_node,
+    approve_and_update_node,
     route_planner_node,
     route_presenter_node,
     farewell_node,
@@ -26,6 +29,7 @@ def build_graph():
     builder.add_node("reaction_analyzer", reaction_analyzer_node)
     builder.add_node("mood_updater", mood_updater_node)
     builder.add_node("spot_accumulator", spot_accumulator_node)
+    builder.add_node("approve_and_update", approve_and_update_node)
     builder.add_node("route_planner", route_planner_node)
     builder.add_node("route_presenter", route_presenter_node)
     builder.add_node("farewell", farewell_node)
@@ -60,20 +64,36 @@ def build_graph():
             "approve": "spot_accumulator",
             "reject": "spot_suggester",
             "mood_update": "mood_updater",
+            "approve_and_update": "approve_and_update",
             "finalize": "route_planner",
         },
     )
 
     builder.add_edge("spot_accumulator", "spot_suggester")
     builder.add_edge("mood_updater", "spot_suggester")
+    builder.add_edge("approve_and_update", "spot_suggester")
 
     # ── エッジ: ルート計画 → 発表 → 終了 ────────────────────
     builder.add_edge("route_planner", "route_presenter")
     builder.add_edge("route_presenter", END)
     builder.add_edge("farewell", END)
 
-    memory = MemorySaver()
-    return builder.compile(checkpointer=memory)
+    return builder.compile(checkpointer=_make_checkpointer())
+
+
+def _make_checkpointer():
+    """既定は SQLite 永続化（リロード・再起動でも会話が残る）。
+    WANDER_CHECKPOINT=memory でインメモリに切り替え（テスト用）。"""
+    if os.getenv("WANDER_CHECKPOINT") == "memory":
+        return MemorySaver()
+    try:
+        from langgraph.checkpoint.sqlite import SqliteSaver
+        db_path = os.path.join(os.path.dirname(__file__), "..", "checkpoints.db")
+        conn = sqlite3.connect(db_path, check_same_thread=False)
+        return SqliteSaver(conn)
+    except ImportError:
+        print("[builder] langgraph-checkpoint-sqlite 未導入のため MemorySaver で起動（永続化なし）")
+        return MemorySaver()
 
 
 compiled_graph = build_graph()
